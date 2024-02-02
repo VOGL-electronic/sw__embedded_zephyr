@@ -36,6 +36,14 @@ config NET_DHCPV4_OPTION_CALLBACKS
 	  can be added. These can be used to support otherwise
 	  DHCP options not used by the rest of the system.
 
+config NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC
+	bool "Encapsulated vendor specific option callbacks"
+	depends on NET_DHCPV4
+	select NET_DHCPV4_OPTION_CALLBACKS
+	help
+	  If set, custom callbacks for encapsulated vendor-specific
+	  information in DHCP option 43 can be added.
+
 config NET_DHCPV4_ACCEPT_UNICAST
 	bool "Accept unicast DHCPv4 traffic"
 	depends on NET_DHCPV4
