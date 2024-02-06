@@ -36,8 +36,8 @@ LOG_MODULE_REGISTER(net_test, CONFIG_NET_DHCPV4_LOG_LEVEL);
 #define NET_LOG_ENABLED 1
 #include "net_private.h"
 
-/* Sample DHCP offer (382 bytes) */
-static const unsigned char offer[382] = {
+/* Sample DHCP offer (394 bytes) */
+static const unsigned char offer[394] = {
 0x02, 0x01, 0x06, 0x00, 0x00, 0x00,
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 0x00, 0x00, 0x0a, 0xed, 0x48, 0x9e, 0x0a, 0xb8,
@@ -85,11 +85,13 @@ static const unsigned char offer[382] = {
 0x69, 0x6e, 0x74, 0x65, 0x6c, 0x03, 0x63, 0x6f,
 0x6d, 0x00, 0x05, 0x69, 0x6e, 0x74, 0x65, 0x6c,
 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x2c, 0x08, 0xa3,
-0x21, 0x07, 0x56, 0x8f, 0xb6, 0xfa, 0x69, 0xff
+0x21, 0x07, 0x56, 0x8f, 0xb6, 0xfa, 0x69, 0x2b,
+0x0A, 0x01, 0x07, 0x73, 0x74, 0x72, 0x69, 0x6e,
+0x67, 0x00, 0xff, 0xff
 };
 
 /* Sample DHCPv4 ACK */
-static const unsigned char ack[382] = {
+static const unsigned char ack[394] = {
 0x02, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00,
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 0x0a, 0xed, 0x48, 0x9e, 0x00, 0x00, 0x00, 0x00,
@@ -137,7 +139,9 @@ static const unsigned char ack[382] = {
 0x74, 0x65, 0x6c, 0x03, 0x63, 0x6f, 0x6d, 0x00,
 0x05, 0x69, 0x6e, 0x74, 0x65, 0x6c, 0x03, 0x63,
 0x6f, 0x6d, 0x00, 0x2c, 0x08, 0xa3, 0x21, 0x07,
-0x56, 0x8f, 0xb6, 0xfa, 0x69, 0xff
+0x56, 0x8f, 0xb6, 0xfa, 0x69, 0x2b, 0x0A, 0x01,
+0x07, 0x73, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x00,
+0xff, 0xff
 };
 
 static const struct in_addr server_addr = { { { 192, 0, 2, 1 } } };
@@ -149,6 +153,7 @@ static const struct in_addr client_addr = { { { 255, 255, 255, 255 } } };
 #define DISCOVER	1
 #define REQUEST		3
 #define OPTION_DOMAIN	15
+#define OPTION_VENDOR_SPECIFIC 1
 
 struct dhcp_msg {
 	uint32_t xid;
@@ -394,6 +399,10 @@ static struct net_mgmt_event_callback dhcp_cb;
 static struct net_dhcpv4_option_callback opt_cb;
 static uint8_t buffer[15];
 #endif
+#ifdef CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC
+static struct net_dhcpv4_option_callback vs_cb;
+static uint8_t buffer_vs[15];
+#endif
 static int event_count;
 
 static void receiver_cb(struct net_mgmt_event_callback *cb,
@@ -434,6 +443,25 @@ static void option_cb(struct net_dhcpv4_option_callback *cb,
 
 #endif /* CONFIG_NET_DHCPV4_OPTION_CALLBACKS */
 
+#ifdef CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC
+
+static void vendor_specific_cb(struct net_dhcpv4_option_callback *cb, size_t length,
+			       enum net_dhcpv4_msg_type msg_type, struct net_if *iface)
+{
+	char expectation[] = "string";
+
+	zassert_equal(cb->option, OPTION_VENDOR_SPECIFIC,
+		      "Unexpected vendor specific option value");
+	zassert_equal(length, sizeof(expectation), "Incorrect data length");
+	zassert_mem_equal(buffer_vs, expectation, sizeof(expectation), "Incorrect buffer contents");
+
+	event_count++;
+
+	k_sem_give(&test_lock);
+}
+
+#endif /* CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC */
+
 ZTEST(dhcpv4_tests, test_dhcp)
 {
 	struct net_if *iface;
@@ -465,6 +493,14 @@ ZTEST(dhcpv4_tests, test_dhcp)
 	net_dhcpv4_add_option_callback(&opt_cb);
 #endif /* CONFIG_NET_DHCPV4_OPTION_CALLBACKS */
 
+#ifdef CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC
+	net_dhcpv4_init_option_vendor_callback(&vs_cb, vendor_specific_cb,
+					OPTION_VENDOR_SPECIFIC, buffer_vs,
+					sizeof(buffer_vs));
+
+	net_dhcpv4_add_option_vendor_callback(&vs_cb);
+#endif /* CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC */
+
 	iface = net_if_get_first_by_type(&NET_L2_GET_NAME(DUMMY));
 	if (!iface) {
 		zassert_true(false, "Interface not available");
@@ -472,7 +508,11 @@ ZTEST(dhcpv4_tests, test_dhcp)
 
 	net_dhcpv4_start(iface);
 
-#ifdef CONFIG_NET_DHCPV4_OPTION_CALLBACKS
+#if defined(CONFIG_NET_DHCPV4_OPTION_CALLBACKS) &&                                                 \
+	defined(CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC)
+	while (event_count < 7) {
+#elif defined(CONFIG_NET_DHCPV4_OPTION_CALLBACKS) ||                                               \
+	defined(CONFIG_NET_DHCPV4_OPTION_CALLBACKS_VENDOR_SPECIFIC)
 	while (event_count < 6) {
 #else
 	while (event_count < 5) {
