@@ -64,6 +64,24 @@ void hawkbit_autohandler(void);
 enum hawkbit_response hawkbit_probe(void);
 
 /**
+ * @brief Set the Hawkbit server address.
+ *
+ * @param addr_str Server address to set.
+ * @return 0 on success.
+ * @return -EAGAIN if probe is currently running.
+ */
+int hawkbit_set_server_addr(char *addr_str);
+
+/**
+ * @brief Set the Hawkbit server port.
+ *
+ * @param port Server port to set.
+ * @return 0 on success.
+ * @return -EAGAIN if probe is currently running.
+ */
+int hawkbit_set_server_port(uint16_t port);
+
+/**
  * @}
  */
 

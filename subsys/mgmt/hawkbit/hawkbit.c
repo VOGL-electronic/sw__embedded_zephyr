@@ -49,6 +49,7 @@ LOG_MODULE_REGISTER(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
 #define DEPLOYMENT_BASE_SIZE 50
 #define RESPONSE_BUFFER_SIZE 1100
 #define HAWKBIT_RECV_TIMEOUT (300 * MSEC_PER_SEC)
+#define HAWKBIT_SET_SERVER_TIMEOUT K_MSEC(300)
 
 #define HTTP_HEADER_CONTENT_TYPE_JSON "application/json;charset=UTF-8"
 
@@ -65,6 +66,8 @@ static uint32_t poll_sleep = (CONFIG_HAWKBIT_POLL_INTERVAL * 60 * MSEC_PER_SEC);
 static uint32_t poll_sleep = (300 * MSEC_PER_SEC);
 #endif
 
+static char hawkbit_server[DNS_MAX_NAME_SIZE + 1];
+static char hawkbit_server_port[6];
 static struct nvs_fs fs;
 
 struct hawkbit_download {
@@ -224,7 +227,7 @@ static bool start_http_client(void)
 	}
 
 	while (resolve_attempts--) {
-		ret = zsock_getaddrinfo(CONFIG_HAWKBIT_SERVER, CONFIG_HAWKBIT_PORT, &hints, &addr);
+		ret = zsock_getaddrinfo(hawkbit_server, hawkbit_server_port, &hints, &addr);
 		if (ret == 0) {
 			break;
 		}
@@ -254,8 +257,8 @@ static bool start_http_client(void)
 		goto err_sock;
 	}
 
-	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, CONFIG_HAWKBIT_SERVER,
-		       sizeof(CONFIG_HAWKBIT_SERVER)) < 0) {
+	if (setsockopt(hb_context.sock, SOL_TLS, TLS_HOSTNAME, hawkbit_server,
+		       sizeof(hawkbit_server)) < 0) {
 		goto err_sock;
 	}
 #endif
@@ -566,6 +569,36 @@ static void hawkbit_dump_deployment(struct hawkbit_dep_res *d)
 	LOG_DBG("md5sum =%s", l->md5sum_http.href);
 }
 
+int hawkbit_set_server_addr(char *addr_str)
+{
+	if (!strcmp(addr_str, hawkbit_server)) {
+		LOG_DBG("hawkbit server address already correctly configured");
+	} else if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
+		strncpy(hawkbit_server, addr_str, sizeof(hawkbit_server));
+		LOG_DBG("configured hawkbit server address: %s", hawkbit_server);
+		k_sem_give(&probe_sem);
+	} else {
+		LOG_WRN("failed setting hawkbit server address");
+		return -EAGAIN;
+	}
+	return 0;
+}
+
+int hawkbit_set_server_port(uint16_t port)
+{
+	if (atoi(hawkbit_server_port) == port) {
+		LOG_DBG("hawkbit server port already correctly configured");
+	} else if (k_sem_take(&probe_sem, HAWKBIT_SET_SERVER_TIMEOUT) == 0) {
+		snprintf(hawkbit_server_port, sizeof(hawkbit_server_port), "%u", port);
+		LOG_DBG("configured hawkbit server port: %s", hawkbit_server_port);
+		k_sem_give(&probe_sem);
+	} else {
+		LOG_WRN("failed setting hawkbit server port");
+		return -EAGAIN;
+	}
+	return 0;
+}
+
 int hawkbit_init(void)
 {
 	bool image_ok;
@@ -597,6 +630,25 @@ int hawkbit_init(void)
 
 	rc = nvs_read(&fs, ADDRESS_ID, &action_id, sizeof(action_id));
 	LOG_DBG("Action id: current %d", action_id);
+
+	if (!strcmp(hawkbit_server, "")) {
+		if (strcmp(CONFIG_HAWKBIT_SERVER, "")) {
+			hawkbit_set_server_addr(CONFIG_HAWKBIT_SERVER);
+		} else {
+			LOG_ERR("no valid hawkbit server address found");
+			return -EFAULT;
+		}
+	}
+
+	if (!strcmp(hawkbit_server_port, "")) {
+		if (strcmp(CONFIG_HAWKBIT_PORT, "")) {
+			strncpy(hawkbit_server_port, CONFIG_HAWKBIT_PORT,
+				sizeof(hawkbit_server_port));
+		} else {
+			LOG_ERR("no valid hawkbit server port found");
+			return -EFAULT;
+		}
+	}
 
 	image_ok = boot_is_img_confirmed();
 	LOG_INF("Image is%s confirmed OK", image_ok ? "" : " not");
@@ -816,8 +868,8 @@ static bool send_request(enum http_method method, enum hawkbit_http_request type
 	memset(&hb_context.recv_buf_tcp, 0, sizeof(hb_context.recv_buf_tcp));
 	hb_context.http_req.url = hb_context.url_buffer;
 	hb_context.http_req.method = method;
-	hb_context.http_req.host = CONFIG_HAWKBIT_SERVER;
-	hb_context.http_req.port = CONFIG_HAWKBIT_PORT;
+	hb_context.http_req.host = hawkbit_server;
+	hb_context.http_req.port = hawkbit_server_port;
 	hb_context.http_req.protocol = "HTTP/1.1";
 	hb_context.http_req.response = response_cb;
 	hb_context.http_req.recv_buf = hb_context.recv_buf_tcp;
