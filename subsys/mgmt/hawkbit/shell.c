@@ -19,13 +19,14 @@ static void cmd_run(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argv);
 
 	shell_fprintf(sh, SHELL_INFO, "Starting hawkBit run...\n");
-	switch (hawkbit_probe()) {
+	hawkbit_autohandler(false);
+
+	switch (hawkbit_autohandler_wait(UINT32_MAX, K_FOREVER)) {
 	case HAWKBIT_UNCONFIRMED_IMAGE:
 		shell_fprintf(
 			sh, SHELL_ERROR,
 			"Image is unconfirmed."
 			"Rebooting to revert back to previous confirmed image\n");
-		hawkbit_reboot();
 		break;
 
 	case HAWKBIT_CANCEL_UPDATE:
@@ -43,7 +44,6 @@ static void cmd_run(const struct shell *sh, size_t argc, char **argv)
 
 	case HAWKBIT_UPDATE_INSTALLED:
 		shell_fprintf(sh, SHELL_INFO, "Update Installed\n");
-		hawkbit_reboot();
 		break;
 
 	case HAWKBIT_DOWNLOAD_ERROR:
