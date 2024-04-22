@@ -13,11 +13,14 @@
 #include "hawkbit_firmware.h"
 #include "hawkbit_device.h"
 
+LOG_MODULE_DECLARE(hawkbit, CONFIG_HAWKBIT_LOG_LEVEL);
+
 static void cmd_run(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
+	LOG_INF("Run started from %s", sh->name);
 	shell_fprintf(sh, SHELL_INFO, "Starting hawkBit run...\n");
 	hawkbit_autohandler(false);
 
