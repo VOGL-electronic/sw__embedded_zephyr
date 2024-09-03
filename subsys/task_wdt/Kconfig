@@ -24,6 +24,7 @@ config TASK_WDT_CHANNELS
 config TASK_WDT_HW_FALLBACK
 	bool "Use hardware watchdog as a fallback"
 	default y
+	depends on WATCHDOG
 	help
 	  This option allows to specify a hardware watchdog device in the
 	  application that is used as an additional safety layer if the task
