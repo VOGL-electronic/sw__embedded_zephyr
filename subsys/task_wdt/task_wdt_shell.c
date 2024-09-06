@@ -15,6 +15,7 @@ static int cmd_init(const struct shell *sh, size_t argc, char *argv)
 	ARG_UNUSED(argv);
 
 #ifdef CONFIG_TASK_WDT_HW_FALLBACK
+	BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay), "No watchdog node found");
 	const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 #else
 	const struct device *const wdt = NULL;
