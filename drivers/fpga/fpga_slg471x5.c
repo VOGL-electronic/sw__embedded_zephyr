@@ -72,13 +72,20 @@ static int fpga_slg471x5_verify(const struct device *dev, uint8_t *img, uint32_t
 	const struct fpga_slg471x5_config *config = dev->config;
 	uint8_t buf[SLG471X5_NREG] = {0}, addr, len;
 	int i;
-
-	i2c_read_dt(&config->bus, buf, SLG471X5_NREG);
+	int ret;
+	ret = i2c_burst_read_dt(&config->bus,0, buf, SLG471X5_NREG);
+	if (ret < 0) {
+		LOG_ERR("Reading bitstream for vertification failed");
+		return ret;
+	}
 
 	for (i = 0; i < config->verify_list_len; i++) {
 		addr = config->verify_list[i].addr;
 		len = config->verify_list[i].len;
 		if (memcmp(&img[addr], &buf[addr], len) != 0) {
+			LOG_ERR("Verification failed at address 0x%02X", addr);
+			LOG_HEXDUMP_ERR(&buf[addr], len, "FPGA: ");
+			LOG_HEXDUMP_ERR(&img[addr], len, "Image: ");
 			return -EIO;
 		}
 	}
@@ -108,6 +115,9 @@ static int fpga_slg471x5_load(const struct device *dev, uint32_t *image_ptr, uin
 				data->loaded = true;
 				return 0;
 			}
+			LOG_INF("Verification failed, trying configured address");
+		} else {
+			LOG_INF("Loading bitstream to unconfigured address failed");
 		}
 	}
 
