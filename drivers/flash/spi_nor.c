@@ -43,6 +43,7 @@ LOG_MODULE_REGISTER(spi_nor, CONFIG_FLASH_LOG_LEVEL);
  */
 
 #define SPI_NOR_MAX_ADDR_WIDTH 4
+#define SPI_NOR_3B_ADDR_MAX 0xFFFFFF
 
 
 #define ANY_INST_HAS_TRUE_(idx, bool_prop)	\
@@ -65,6 +66,7 @@ LOG_MODULE_REGISTER(spi_nor, CONFIG_FLASH_LOG_LEVEL);
 #define ANY_INST_HAS_RESET_GPIOS ANY_INST_HAS_PROP(reset_gpios)
 #define ANY_INST_HAS_WP_GPIOS ANY_INST_HAS_PROP(wp_gpios)
 #define ANY_INST_HAS_HOLD_GPIOS ANY_INST_HAS_PROP(hold_gpios)
+#define ANY_INST_USE_4B_ADDR_OPCODES ANY_INST_HAS_TRUE(use_4b_addr_opcodes)
 
 #ifdef CONFIG_SPI_NOR_ACTIVE_DWELL_MS
 #define ACTIVE_DWELL_MS CONFIG_SPI_NOR_ACTIVE_DWELL_MS
@@ -153,6 +155,10 @@ struct spi_nor_config {
 	bool mxicy_mx25r_power_mode;
 #endif
 
+#if ANY_INST_USE_4B_ADDR_OPCODES
+	bool use_4b_addr_opcodes:1;
+#endif
+
 	/* exist flags for dts opt-ins */
 	bool dpd_exist:1;
 	bool dpd_wakeup_sequence_exist:1;
@@ -220,6 +226,18 @@ static const struct jesd216_erase_type minimal_erase_types[JESD216_NUM_ERASE_TYP
 		.exp = 12,
 	},
 };
+#if ANY_INST_USE_4B_ADDR_OPCODES
+static const struct jesd216_erase_type minimal_erase_types_4b[JESD216_NUM_ERASE_TYPES] = {
+	{
+		.cmd = SPI_NOR_CMD_BE_4B,
+		.exp = 16,
+	},
+	{
+		.cmd = SPI_NOR_CMD_SE_4B,
+		.exp = 12,
+	},
+};
+#endif /* ANY_INST_USE_4B_ADDR_OPCODES */
 #endif /* CONFIG_SPI_NOR_SFDP_MINIMAL */
 
 /* Register writes should be ready extremely quickly */
@@ -239,6 +257,11 @@ static inline const struct jesd216_erase_type *
 dev_erase_types(const struct device *dev)
 {
 #ifdef CONFIG_SPI_NOR_SFDP_MINIMAL
+#if ANY_INST_USE_4B_ADDR_OPCODES
+	if(DEV_CFG(dev)->use_4b_addr_opcodes) {
+		return minimal_erase_types_4b;
+	}
+#endif /* ANY_INST_USE_4B_ADDR_OPCODES */
 	return minimal_erase_types;
 #else /* CONFIG_SPI_NOR_SFDP_MINIMAL */
 	const struct spi_nor_data *data = dev->data;
@@ -432,11 +455,25 @@ static int spi_nor_access(const struct device *const dev,
 	spi_nor_access(dev, opcode, 0, 0, dest, length)
 #define spi_nor_cmd_addr_read(dev, opcode, addr, dest, length) \
 	spi_nor_access(dev, opcode, NOR_ACCESS_ADDRESSED, addr, dest, length)
+#define spi_nor_cmd_addr_read_3b(dev, opcode, addr, dest, length)                                  \
+	spi_nor_access(dev, opcode, NOR_ACCESS_24BIT_ADDR | NOR_ACCESS_ADDRESSED, addr, dest,      \
+		       length)
+#define spi_nor_cmd_addr_read_4b(dev, opcode, addr, dest, length)                                  \
+	spi_nor_access(dev, opcode, NOR_ACCESS_32BIT_ADDR | NOR_ACCESS_ADDRESSED, addr, dest,      \
+		       length)
 #define spi_nor_cmd_write(dev, opcode) \
 	spi_nor_access(dev, opcode, NOR_ACCESS_WRITE, 0, NULL, 0)
 #define spi_nor_cmd_addr_write(dev, opcode, addr, src, length) \
 	spi_nor_access(dev, opcode, NOR_ACCESS_WRITE | NOR_ACCESS_ADDRESSED, \
 		       addr, (void *)src, length)
+#define spi_nor_cmd_addr_write_3b(dev, opcode, addr, src, length)                                  \
+	spi_nor_access(dev, opcode,                                                                \
+		       NOR_ACCESS_24BIT_ADDR | NOR_ACCESS_WRITE | NOR_ACCESS_ADDRESSED, addr,      \
+		       (void *)src, length)
+#define spi_nor_cmd_addr_write_4b(dev, opcode, addr, src, length)                                  \
+	spi_nor_access(dev, opcode,                                                                \
+		       NOR_ACCESS_32BIT_ADDR | NOR_ACCESS_WRITE | NOR_ACCESS_ADDRESSED, addr,      \
+		       (void *)src, length)
 
 /**
  * @brief Wait until the flash is ready
@@ -784,7 +821,19 @@ static int spi_nor_read(const struct device *dev, off_t addr, void *dest,
 
 	acquire_device(dev);
 
-	ret = spi_nor_cmd_addr_read(dev, SPI_NOR_CMD_READ, addr, dest, size);
+#if ANY_INST_USE_4B_ADDR_OPCODES
+	if (DEV_CFG(dev)->use_4b_addr_opcodes) {
+		if (addr > SPI_NOR_3B_ADDR_MAX) {
+			ret = spi_nor_cmd_addr_read_4b(dev, SPI_NOR_CMD_READ_4B, addr, dest, size);
+		} else {
+			ret = spi_nor_cmd_addr_read_3b(dev, SPI_NOR_CMD_READ, addr, dest, size);
+		}
+	} else {
+#else
+	if (1) {
+#endif
+		ret = spi_nor_cmd_addr_read(dev, SPI_NOR_CMD_READ, addr, dest, size);
+	}
 
 	release_device(dev);
 
@@ -867,8 +916,23 @@ static int spi_nor_write(const struct device *dev, off_t addr,
 				break;
 			}
 
-			ret = spi_nor_cmd_addr_write(dev, SPI_NOR_CMD_PP, addr,
-						src, to_write);
+#if ANY_INST_USE_4B_ADDR_OPCODES
+			if (DEV_CFG(dev)->use_4b_addr_opcodes) {
+				if (addr > SPI_NOR_3B_ADDR_MAX) {
+					ret = spi_nor_cmd_addr_write_4b(dev, SPI_NOR_CMD_PP_4B,
+									addr, src, to_write);
+				} else {
+					ret = spi_nor_cmd_addr_write_3b(dev, SPI_NOR_CMD_PP, addr,
+									src, to_write);
+				}
+			} else {
+#else
+			if (1) {
+#endif
+				ret = spi_nor_cmd_addr_write(dev, SPI_NOR_CMD_PP, addr, src,
+							     to_write);
+			}
+
 			if (ret != 0) {
 				break;
 			}
@@ -953,7 +1017,15 @@ static int spi_nor_erase(const struct device *dev, off_t addr, size_t size)
 				}
 			}
 			if (bet != NULL) {
-				ret = spi_nor_cmd_addr_write(dev, bet->cmd, addr, NULL, 0);
+#if ANY_INST_USE_4B_ADDR_OPCODES
+				if(DEV_CFG(dev)->use_4b_addr_opcodes) {
+					ret = spi_nor_cmd_addr_write_4b(dev, bet->cmd, addr, NULL, 0);
+				} else {
+#else
+				if (1) {
+#endif
+					ret = spi_nor_cmd_addr_write(dev, bet->cmd, addr, NULL, 0);
+				}
 				addr += BIT(bet->exp);
 				size -= BIT(bet->exp);
 			} else {
@@ -1142,6 +1214,26 @@ static int spi_nor_process_bfp(const struct device *dev,
 	memset(data->erase_types, 0, sizeof(data->erase_types));
 	for (uint8_t ti = 1; ti <= ARRAY_SIZE(data->erase_types); ++ti) {
 		if (jesd216_bfp_erase(bfp, ti, etp) == 0) {
+#if ANY_INST_USE_4B_ADDR_OPCODES
+			if (DEV_CFG(dev)->use_4b_addr_opcodes) {
+				switch (etp->cmd) {
+				case SPI_NOR_CMD_SE:
+					etp->cmd = SPI_NOR_CMD_SE_4B;
+					LOG_DBG("Rewrite SE to %02x", etp->cmd);
+					break;
+
+				case SPI_NOR_CMD_BE:
+					etp->cmd = SPI_NOR_CMD_BE_4B;
+					LOG_DBG("Rewrite BE to %02x", etp->cmd);
+					break;
+
+				default:
+					etp->cmd = 0;
+					etp->exp = 0;
+					break;
+				}
+			}
+#endif
 			LOG_DBG("Erase %u with %02x", (uint32_t)BIT(etp->exp), etp->cmd);
 		}
 		++etp;
@@ -1163,6 +1255,12 @@ static int spi_nor_process_bfp(const struct device *dev,
 	if (jesd216_bfp_addrbytes(bfp) != JESD216_SFDP_BFP_DW1_ADDRBYTES_VAL_3B) {
 		struct jesd216_bfp_dw16 dw16;
 		int rc = 0;
+#if ANY_INST_USE_4B_ADDR_OPCODES
+		if(DEV_CFG(dev)->use_4b_addr_opcodes) {
+			LOG_DBG("4-byte addressing supported, using it via specific opcodes");
+			return 0;
+		}
+#endif
 
 		if (jesd216_bfp_decode_dw16(php, bfp, &dw16) == 0) {
 			rc = spi_nor_set_address_mode(dev, dw16.enter_4ba);
@@ -1703,6 +1801,8 @@ static const struct flash_driver_api spi_nor_api = {
 		IF_ENABLED(ANY_INST_HAS_RESET_GPIOS, (INIT_RESET_GPIOS(idx),))			\
 		IF_ENABLED(ANY_INST_HAS_WP_GPIOS, (INIT_WP_GPIOS(idx),))			\
 		IF_ENABLED(ANY_INST_HAS_HOLD_GPIOS, (INIT_HOLD_GPIOS(idx),))			\
+		IF_ENABLED(ANY_INST_USE_4B_ADDR_OPCODES, 					\
+			(.use_4b_addr_opcodes = DT_INST_PROP(idx, use_4b_addr_opcodes),))	\
 		IF_DISABLED(CONFIG_SPI_NOR_SFDP_RUNTIME, (INST_CONFIG_STRUCT_GEN(idx)))};
 
 #define ASSIGN_PM(idx)							\
