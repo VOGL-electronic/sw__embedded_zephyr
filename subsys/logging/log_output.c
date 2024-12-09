@@ -50,14 +50,6 @@ static const char *const colors[] = {
 static uint32_t freq;
 static log_timestamp_t timestamp_div;
 
-#define SECONDS_IN_DAY			86400U
-
-struct YMD_date {
-	uint32_t year;
-	uint32_t month;
-	uint32_t day;
-};
-
 /* The RFC 5424 allows very flexible mapping and suggest the value 0 being the
  * highest severity and 7 to be the lowest (debugging level) severity.
  *
@@ -147,58 +139,6 @@ static int print_formatted(const struct log_output *output,
 	return length;
 }
 
-static inline bool is_leap_year(uint32_t year)
-{
-	return (((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0));
-}
-
-static void __attribute__((unused)) get_YMD_from_seconds(uint64_t seconds,
-			struct YMD_date *output_date)
-{
-#if defined(CONFIG_COMMON_LIBC_GMTIME_R) || defined(CONFIG_TC_PROVIDES_POSIX_C_LANG_SUPPORT_R)
-	time_t time_seconds = seconds;
-	struct tm tm_timestamp = {0};
-
-	gmtime_r(&time_seconds, &tm_timestamp);
-
-	output_date->year = tm_timestamp.tm_year + 1900;
-	output_date->month = tm_timestamp.tm_mon + 1;
-	output_date->day = tm_timestamp.tm_mday;
-#else  /* CONFIG_COMMON_LIBC_GMTIME_R || CONFIG_TC_PROVIDES_POSIX_C_LANG_SUPPORT_R */
-	static const uint32_t days_in_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-	uint64_t tmp;
-	int i;
-
-	output_date->year = 1970;
-	output_date->month = 1;
-	output_date->day = 1;
-
-	/* compute the proper year */
-	while (1) {
-		tmp = (is_leap_year(output_date->year)) ?
-					366*SECONDS_IN_DAY : 365*SECONDS_IN_DAY;
-		if (tmp > seconds) {
-			break;
-		}
-		seconds -= tmp;
-		output_date->year++;
-	}
-	/* compute the proper month */
-	for (i = 0; i < ARRAY_SIZE(days_in_month); i++) {
-		tmp = ((i == 1) && is_leap_year(output_date->year)) ?
-					((uint64_t)days_in_month[i] + 1) * SECONDS_IN_DAY :
-					(uint64_t)days_in_month[i] * SECONDS_IN_DAY;
-		if (tmp > seconds) {
-			output_date->month += i;
-			break;
-		}
-		seconds -= tmp;
-	}
-
-	output_date->day += seconds / SECONDS_IN_DAY;
-#endif /* CONFIG_COMMON_LIBC_GMTIME_R || CONFIG_TC_PROVIDES_POSIX_C_LANG_SUPPORT_R*/
-}
-
 static int timestamp_print(const struct log_output *output,
 			   uint32_t flags, log_timestamp_t timestamp)
 {
@@ -242,7 +182,7 @@ static int timestamp_print(const struct log_output *output,
 		us = (1000 * (remainder * 1000U - (ms * freq))) / freq;
 
 		if (IS_ENABLED(CONFIG_LOG_BACKEND_NET) && flags & LOG_OUTPUT_FLAG_FORMAT_SYSLOG) {
-#if defined(CONFIG_REQUIRES_FULL_LIBC)
+#if defined(CONFIG_POSIX_C_LANG_SUPPORT_R)
 			char time_str[sizeof("1970-01-01T00:00:00")];
 			struct tm tm_timestamp = {0};
 			time_t time_seconds = total_seconds;
@@ -253,15 +193,6 @@ static int timestamp_print(const struct log_output *output,
 
 			length = print_formatted(output, "%s.%06uZ ",
 						 time_str, ms * 1000U + us);
-#else
-			struct YMD_date date;
-
-			get_YMD_from_seconds(total_seconds, &date);
-			hours = hours % 24;
-			length = print_formatted(output,
-					"%04u-%02u-%02uT%02u:%02u:%02u.%06uZ ",
-					date.year, date.month, date.day,
-					hours, mins, seconds, ms * 1000U + us);
 #endif
 		} else if (IS_ENABLED(CONFIG_LOG_OUTPUT_FORMAT_CUSTOM_TIMESTAMP)) {
 			length = log_custom_timestamp_print(output, timestamp, print_formatted);
@@ -274,8 +205,8 @@ static int timestamp_print(const struct log_output *output,
 							"[%5lu.%06d] ",
 #endif
 							total_seconds, ms * 1000U + us);
+#if defined(CONFIG_POSIX_C_LANG_SUPPORT_R)
 			} else if (IS_ENABLED(CONFIG_LOG_OUTPUT_FORMAT_DATE_TIMESTAMP)) {
-#if defined(CONFIG_REQUIRES_FULL_LIBC)
 				char time_str[sizeof("1970-01-01 00:00:00")];
 				struct tm tm_timestamp = {0};
 				time_t time_seconds = total_seconds;
@@ -286,18 +217,7 @@ static int timestamp_print(const struct log_output *output,
 
 				length = print_formatted(output, "[%s.%03u,%03u] ", time_str, ms,
 							 us);
-#else
-				struct YMD_date date;
-
-				get_YMD_from_seconds(total_seconds, &date);
-				hours = hours % 24;
-				length = print_formatted(
-					output, "[%04u-%02u-%02u %02u:%02u:%02u.%03u,%03u] ",
-					date.year, date.month, date.day, hours, mins, seconds, ms,
-					us);
-#endif
 			} else if (IS_ENABLED(CONFIG_LOG_OUTPUT_FORMAT_ISO8601_TIMESTAMP)) {
-#if defined(CONFIG_REQUIRES_FULL_LIBC)
 				char time_str[sizeof("1970-01-01T00:00:00")];
 				struct tm tm_timestamp = {0};
 				time_t time_seconds = total_seconds;
@@ -308,15 +228,6 @@ static int timestamp_print(const struct log_output *output,
 
 				length = print_formatted(output, "[%s,%06uZ] ", time_str,
 							 ms * 1000U + us);
-#else
-				struct YMD_date date;
-
-				get_YMD_from_seconds(total_seconds, &date);
-				hours = hours % 24;
-				length = print_formatted(output,
-							 "[%04u-%02u-%02uT%02u:%02u:%02u,%06uZ] ",
-							 date.year, date.month, date.day, hours,
-							 mins, seconds, ms * 1000U + us);
 #endif
 			} else {
 				length = print_formatted(output,
