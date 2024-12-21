@@ -245,7 +245,7 @@ static int hawkbit_settings_set(const char *name, size_t len, settings_read_cb r
 				void *cb_arg)
 {
 	const char *next;
-	int rc;
+	int rc = 0;
 
 	if (settings_name_steq(name, "action_id", &next) && !next) {
 		if (len != sizeof(hb_cfg.action_id)) {
@@ -297,9 +297,7 @@ static int hawkbit_settings_set(const char *name, size_t len, settings_read_cb r
 	}
 
 	if (settings_name_steq(name, "ddi_token", &next) && !next) {
-#ifdef CONFIG_HAWKBIT_DDI_NO_SECURITY
-		rc = read_cb(cb_arg, NULL, 0);
-#else
+#ifndef CONFIG_HAWKBIT_DDI_NO_SECURITY
 		if (len != sizeof(hb_cfg.ddi_security_token)) {
 			return -EINVAL;
 		}
@@ -316,7 +314,8 @@ static int hawkbit_settings_set(const char *name, size_t len, settings_read_cb r
 	if (settings_name_steq(name, "server_addr", NULL) ||
 	    settings_name_steq(name, "server_port", NULL) ||
 	    settings_name_steq(name, "ddi_token", NULL)) {
-		rc = read_cb(cb_arg, NULL, 0);
+		LOG_DBG("Unable to set hawkBit settings via the settings subsystem, enable "
+			"CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME to set them");
 		return 0;
 	}
 #endif /* CONFIG_HAWKBIT_SET_SETTINGS_RUNTIME */
